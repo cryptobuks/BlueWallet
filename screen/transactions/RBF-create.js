@@ -1,8 +1,8 @@
 /** @type {AppStorage}  */
+/* global alert */
 import React, { Component } from 'react';
-import { TextInput } from 'react-native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Text, FormValidationMessage } from 'react-native-elements';
+import { TextInput, View, ActivtyIndicator } from 'react-native';
+import { FormValidationMessage } from 'react-native-elements';
 import {
   BlueLoading,
   BlueSpacing20,
@@ -11,6 +11,7 @@ import {
   BlueCard,
   BlueText,
   BlueSpacing,
+  BlueNavigationStyle,
 } from '../../BlueComponents';
 import PropTypes from 'prop-types';
 let BigNumber = require('bignumber.js');
@@ -18,16 +19,10 @@ let bitcoinjs = require('bitcoinjs-lib');
 let BlueApp = require('../../BlueApp');
 
 export default class SendCreate extends Component {
-  static navigationOptions = {
-    tabBarIcon: ({ tintColor, focused }) => (
-      <Ionicons
-        name={focused ? 'ios-list-box' : 'ios-list-box-outline'}
-        size={26}
-        style={{ color: tintColor }}
-      />
-    ),
-  };
-
+  static navigationOptions = () => ({
+    ...BlueNavigationStyle(null, false),
+    title: 'Create RBF',
+  });
   constructor(props) {
     super(props);
     console.log('send/create constructor');
@@ -37,8 +32,7 @@ export default class SendCreate extends Component {
     this.state = {
       isLoading: true,
       feeDelta: props.navigation.state.params.feeDelta,
-      newDestinationAddress:
-        props.navigation.state.params.newDestinationAddress,
+      newDestinationAddress: props.navigation.state.params.newDestinationAddress,
       txid: props.navigation.state.params.txid,
       sourceTx: props.navigation.state.params.sourceTx,
       fromWallet: props.navigation.state.params.sourceWallet,
@@ -94,13 +88,11 @@ export default class SendCreate extends Component {
         changeAddress = o.addresses[0];
       } else {
         transferAmount = new BigNumber(o.value);
-        transferAmount = transferAmount.div(100000000).toString(10);
+        transferAmount = transferAmount.dividedBy(100000000).toString(10);
       }
     }
-    let oldFee = new BigNumber(
-      totalInputAmountSatoshi - totalOutputAmountSatoshi,
-    );
-    oldFee = parseFloat(oldFee.div(100000000).toString(10));
+    let oldFee = new BigNumber(totalInputAmountSatoshi - totalOutputAmountSatoshi);
+    oldFee = parseFloat(oldFee.dividedBy(100000000).toString(10));
 
     console.log('changeAddress = ', changeAddress);
     console.log('utxo', utxo);
@@ -111,7 +103,7 @@ export default class SendCreate extends Component {
     console.log('oldFee', oldFee);
 
     let newFee = new BigNumber(oldFee);
-    newFee = newFee.add(this.state.feeDelta).toString(10);
+    newFee = newFee.plus(this.state.feeDelta).toString(10);
     console.log('new Fee', newFee);
 
     // creating TX
@@ -120,29 +112,19 @@ export default class SendCreate extends Component {
       // more responsive
       let tx;
       try {
-        tx = this.state.fromWallet.createTx(
-          utxo,
-          transferAmount,
-          newFee,
-          this.state.newDestinationAddress,
-          false,
-          lastSequence,
-        );
+        tx = this.state.fromWallet.createTx(utxo, transferAmount, newFee, this.state.newDestinationAddress, false, lastSequence);
         BlueApp.tx_metadata[this.state.txid] = txMetadata || {};
         BlueApp.tx_metadata[this.state.txid]['last_sequence'] = lastSequence;
 
         // in case new TX get confirmed, we must save metadata under new txid
-        let bitcoin = require('bitcoinjs-lib');
+        let bitcoin = bitcoinjs;
         let txDecoded = bitcoin.Transaction.fromHex(tx);
         let txid = txDecoded.getId();
         BlueApp.tx_metadata[txid] = BlueApp.tx_metadata[this.state.txid];
         BlueApp.tx_metadata[txid]['txhex'] = tx;
         //
         BlueApp.saveToDisk();
-        console.log(
-          'BlueApp.txMetadata[this.state.txid]',
-          BlueApp.tx_metadata[this.state.txid],
-        );
+        console.log('BlueApp.txMetadata[this.state.txid]', BlueApp.tx_metadata[this.state.txid]);
       } catch (err) {
         console.log(err);
         return this.setState({
@@ -152,7 +134,7 @@ export default class SendCreate extends Component {
       }
 
       let newFeeSatoshi = new BigNumber(newFee);
-      newFeeSatoshi = parseInt(newFeeSatoshi.mul(100000000));
+      newFeeSatoshi = parseInt(newFeeSatoshi.multipliedBy(100000000));
       let satoshiPerByte = Math.round(newFeeSatoshi / (tx.length / 2));
       this.setState({
         isLoading: false,
@@ -166,24 +148,25 @@ export default class SendCreate extends Component {
   }
 
   async broadcast() {
-    console.log('broadcasting', this.state.tx);
-    let result = await this.state.fromWallet.broadcastTx(this.state.tx);
-    console.log('broadcast result = ', result);
-    if (typeof result === 'string') {
-      result = JSON.parse(result);
-    }
-    if (result && result.error) {
-      this.setState({
-        broadcastErrorMessage: JSON.stringify(result.error),
-        broadcastSuccessMessage: '',
-      });
-    } else {
-      this.setState({ broadcastErrorMessage: '' });
-      this.setState({
-        broadcastSuccessMessage:
-          'Success! TXID: ' + JSON.stringify(result.result),
-      });
-    }
+    this.setState({ isLoading: true }, async () => {
+      console.log('broadcasting', this.state.tx);
+      let result = await this.state.fromWallet.broadcastTx(this.state.tx);
+      console.log('broadcast result = ', result);
+      if (typeof result === 'string') {
+        try {
+          result = JSON.parse(result);
+        } catch (_) {
+          result = { result };
+        }
+      }
+      if (result && result.error) {
+        alert(JSON.stringify(result.error));
+        this.setState({ isLoading: false });
+      } else {
+        alert(JSON.stringify(result.result || result.txid));
+        this.props.navigation.navigate('TransactionStatus');
+      }
+    });
   }
 
   render() {
@@ -191,21 +174,11 @@ export default class SendCreate extends Component {
       return (
         <SafeBlueArea style={{ flex: 1, paddingTop: 20 }}>
           <BlueSpacing />
-          <BlueCard
-            title={'Replace Transaction'}
-            style={{ alignItems: 'center', flex: 1 }}
-          >
-            <BlueText>
-              Error creating transaction. Invalid address or send amount?
-            </BlueText>
-            <FormValidationMessage>
-              {this.state.errorMessage}
-            </FormValidationMessage>
+          <BlueCard title={'Replace Transaction'} style={{ alignItems: 'center', flex: 1 }}>
+            <BlueText>Error creating transaction. Invalid address or send amount?</BlueText>
+            <FormValidationMessage>{this.state.errorMessage}</FormValidationMessage>
           </BlueCard>
-          <BlueButton
-            onPress={() => this.props.navigation.goBack()}
-            title="Go back"
-          />
+          <BlueButton onPress={() => this.props.navigation.goBack()} title="Go back" />
         </SafeBlueArea>
       );
     }
@@ -217,18 +190,11 @@ export default class SendCreate extends Component {
     if (this.state.nonReplaceable) {
       return (
         <SafeBlueArea style={{ flex: 1, paddingTop: 20 }}>
-          <BlueSpacing20 />
-          <BlueSpacing20 />
-          <BlueSpacing20 />
-          <BlueSpacing20 />
-          <BlueSpacing20 />
-
-          <BlueText h4>This transaction is not replaceable</BlueText>
-
-          <BlueButton
-            onPress={() => this.props.navigation.goBack()}
-            title="Back"
-          />
+          <View style={{ flex: 1, justifyContent: 'center', alignContent: 'center' }}>
+            <BlueText h4 style={{ textAlign: 'center' }}>
+              This transaction is not replaceable
+            </BlueText>
+          </View>
         </SafeBlueArea>
       );
     }
@@ -236,14 +202,8 @@ export default class SendCreate extends Component {
     return (
       <SafeBlueArea style={{ flex: 1, paddingTop: 20 }}>
         <BlueSpacing />
-        <BlueCard
-          title={'Replace Transaction'}
-          style={{ alignItems: 'center', flex: 1 }}
-        >
-          <BlueText>
-            This is transaction hex, signed and ready to be broadcast to the
-            network. Continue?
-          </BlueText>
+        <BlueCard title={'Replace Transaction'} style={{ alignItems: 'center', flex: 1 }}>
+          <BlueText>This is transaction hex, signed and ready to be broadcast to the network. Continue?</BlueText>
 
           <TextInput
             style={{
@@ -260,33 +220,17 @@ export default class SendCreate extends Component {
 
           <BlueSpacing20 />
 
-          <BlueText style={{ paddingTop: 20 }}>
-            To: {this.state.newDestinationAddress}
-          </BlueText>
+          <BlueText style={{ paddingTop: 20 }}>To: {this.state.newDestinationAddress}</BlueText>
           <BlueText>Amount: {this.state.amount} BTC</BlueText>
           <BlueText>Fee: {this.state.fee} BTC</BlueText>
           <BlueText>TX size: {this.state.size} Bytes</BlueText>
           <BlueText>satoshiPerByte: {this.state.satoshiPerByte} Sat/B</BlueText>
         </BlueCard>
-
-        <BlueButton
-          icon={{ name: 'megaphone', type: 'octicon' }}
-          onPress={() => this.broadcast()}
-          title="Broadcast"
-        />
-
-        <BlueButton
-          icon={{ name: 'arrow-left', type: 'octicon' }}
-          onPress={() => this.props.navigation.goBack()}
-          title="Go back"
-        />
-
-        <FormValidationMessage>
-          {this.state.broadcastErrorMessage}
-        </FormValidationMessage>
-        <Text style={{ padding: 20, color: '#080' }}>
-          {this.state.broadcastSuccessMessage}
-        </Text>
+        {this.state.isLoading ? (
+          <ActivtyIndicator />
+        ) : (
+          <BlueButton icon={{ name: 'bullhorn', type: 'font-awesome' }} onPress={() => this.broadcast()} title="Broadcast" />
+        )}
       </SafeBlueArea>
     );
   }
@@ -294,7 +238,8 @@ export default class SendCreate extends Component {
 
 SendCreate.propTypes = {
   navigation: PropTypes.shape({
-    goBack: PropTypes.function,
+    goBack: PropTypes.func,
+    navigate: PropTypes.func,
     state: PropTypes.shape({
       params: PropTypes.shape({
         address: PropTypes.string,
@@ -302,7 +247,7 @@ SendCreate.propTypes = {
         fromAddress: PropTypes.string,
         newDestinationAddress: PropTypes.string,
         txid: PropTypes.string,
-        sourceTx: PropTypes.string,
+        sourceTx: PropTypes.object,
         sourceWallet: PropTypes.object,
       }),
     }),
